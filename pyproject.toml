@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scplauncher"
+version = "0.1.0"
+description = "Консольный лаунчер для SCP: Containment Breach (Windows и Linux через Wine)"
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = []
+
+[project.scripts]
+scplauncher = "scplauncher.cli:main"
+
+[tool.setuptools]
+packages = ["scplauncher"]
+
+[tool.setuptools.package-data]
+scplauncher = ["versions.json"]
