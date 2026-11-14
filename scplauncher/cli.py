@@ -217,6 +217,10 @@ def cmd_start(args, layout: Layout) -> int:
     if args.skip_launcher:
         # Отключает встроенное окно выбора разрешения, которое игра показывает при старте.
         settings.append(("launcher", "launcher enabled", "false"))
+    if runner.needs_wine() and not args.startup_video:
+        # Под Wine нет видеокодеков: BlitzMovie.dll портит память при показе
+        # вступительного видео, и игра падает на 40% загрузки ("Memory access violation").
+        settings.append(("options", "play startup video", "false"))
     settings += args.set or []
     _apply_settings(inst, settings)
 
@@ -395,6 +399,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wine", metavar="PATH", help="[Linux] путь к wine (или переменная SCPL_WINE)")
     s.add_argument("--wine-prefix", metavar="PATH", help="[Linux] свой WINEPREFIX")
     s.add_argument("--system-prefix", action="store_true", help="[Linux] использовать обычный ~/.wine")
+    s.add_argument("--startup-video", action="store_true",
+                   help="[Linux] показывать вступительное видео (по умолчанию выключено: под Wine из-за него игра вылетает)")
     s.add_argument("--vram", type=int, default=512, metavar="МБ",
                    help="[Linux] сколько видеопамяти Wine сообщает игре (по умолчанию %(default)s; "
                         "0 — не трогать). Защищает от 'Memory access violation' при загрузке")

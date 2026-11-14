@@ -19,6 +19,9 @@ from .manifest import USER_AGENT
 from .paths import Layout, remove_file
 
 OK, WARN, FAIL = "OK", "!!", "XX"
+INFO = "--"  # просто сведения: на запуск SCP:CB не влияет
+
+FLATHUB_URL = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 
 # Ванильная игра (~235 МБ архив + ~330 МБ распакованная) и Wine (~95 МБ архив + ~800 МБ).
 NEEDED_SPACE = 1600 * 2**20
@@ -62,13 +65,55 @@ def _exec_allowed(directory: Path) -> tuple[bool, str]:
         remove_file(path)
 
 
+def _linux_distro() -> str | None:
+    """Название дистрибутива из /etc/os-release (например "RED OS 8")."""
+    try:
+        text = Path("/etc/os-release").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fields = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            fields[k.strip()] = v.strip().strip('"')
+    name = fields.get("PRETTY_NAME") or fields.get("NAME")
+    return f"{name} (ядро {platform.release()})" if name else None
+
+
+def _flatpak_check() -> Check:
+    title = "Flatpak (для Steam/Sober)"
+    exe = shutil.which("flatpak")
+    if exe is None:
+        return Check(INFO, title, "не установлен",
+                     "без прав администратора не поставить; Steam и Sober через Flatpak недоступны "
+                     "(SCP:CB это не мешает)")
+    try:
+        ver = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                             timeout=20).stdout.strip()
+        remotes = subprocess.run([exe, "remotes", "--columns=name,options"],
+                                 capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return Check(WARN, title, f"{exe}: {e}", "Flatpak есть, но не запускается")
+
+    found = [line.split() for line in remotes.splitlines() if line.strip()]
+    flathub = [r for r in found if r[0].lower() == "flathub"]
+    if flathub:
+        where = ", ".join(r[1] if len(r) > 1 else "?" for r in flathub)
+        return Check(OK, title, f"{ver}; Flathub подключён ({where})")
+    return Check(OK, title, f"{ver}; Flathub не подключён",
+                 "подключить для себя без sudo: flatpak remote-add --user --if-not-exists "
+                 "flathub https://dl.flathub.org/repo/flathub.flatpakrepo")
+
+
 def run(layout: Layout, wine_override: str | None = None) -> list[Check]:
     checks: list[Check] = []
     linux = runner.needs_wine()
 
     # --- система
     machine = platform.machine().lower()
-    checks.append(Check(OK, "Система", f"{platform.system()} {platform.release()}, {machine}"))
+    distro = _linux_distro() if linux else None
+    system = distro or f"{platform.system()} {platform.release()}"
+    checks.append(Check(OK, "Система", f"{system}, {machine}"))
     if linux and machine not in ("x86_64", "amd64"):
         checks.append(Check(FAIL, "Архитектура", machine,
                             "переносной Wine есть только для 64-битных x86 (x86_64)"))
@@ -129,6 +174,9 @@ def run(layout: Layout, wine_override: str | None = None) -> list[Check]:
             checks.append(Check(WARN, "Графический сеанс", "нет DISPLAY/WAYLAND_DISPLAY",
                                 "игру нужно запускать из терминала внутри рабочего стола, не по SSH"))
 
+        # Flatpak для SCP:CB не нужен, но через него без sudo ставятся Steam и Sober (Roblox).
+        checks.append(_flatpak_check())
+
     # --- сеть
     sites = [
         ("Сайт игры (undertowgames.com)",
@@ -142,6 +190,10 @@ def run(layout: Layout, wine_override: str | None = None) -> list[Check]:
         checks.append(Check(OK if ok else WARN, title, detail,
                             "" if ok else "сайт недоступен: скачайте файлы на другом компьютере "
                             "и используйте import / wine install --file"))
+    if linux:
+        ok, detail = _reachable(FLATHUB_URL)
+        checks.append(Check(OK if ok else INFO, "Flathub (dl.flathub.org)", detail,
+                            "" if ok else "Flathub закрыт в этой сети: приложения Flatpak не скачать"))
 
     # --- установленные версии
     insts = instances.list_instances(layout.instances_dir)
